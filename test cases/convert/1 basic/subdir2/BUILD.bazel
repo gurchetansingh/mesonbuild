@@ -1,0 +1,28 @@
+# Copyright (C) 2025-2026 The Magma GPU Project
+# SPDX-License-Identifier: Apache-2.0
+#
+# Generated via:
+#   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+#
+# Submit patches, do not hand-edit.
+
+
+load("//tools/build_defs/license:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [
+        "Apache-2.0",
+    ],
+    default_visibility = ["//visibility:public"],
+)
+
+
+cc_library(
+    name = "lib2",
+    srcs = [
+        "lib2.c",
+    ],
+    deps = [
+        "inc",
+    ],
+)
