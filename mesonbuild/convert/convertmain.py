@@ -217,7 +217,9 @@ def convert_build_system(
     options.project_dir = os.path.abspath(options.project_dir)
     output_dir = os.path.abspath(options.output_dir) if options.output_dir else options.project_dir
 
-    project_config = ConvertProjectConfig(config_toml, dependencies)
+    project_config = ConvertProjectConfig(
+        config_toml, dependencies, os.path.dirname(options.config)
+    )
     state_tracker, emitter = choose_build_system(project_config, output_dir)
 
     mlog.set_quiet()

@@ -367,7 +367,18 @@ class SoongEmitter(CommonEmitter):
                 module = SoongModuleEmitter(target)
                 content += module.emit()
 
-            content += "\n"
+            if not subdir:
+                handwritten_modules = state_tracker.project_config.handwritten_modules
+                if handwritten_modules:
+                    handwritten_path = os.path.join(
+                        state_tracker.project_config.config_dir, handwritten_modules
+                    )
+                    if os.path.exists(handwritten_path):
+                        with open(handwritten_path, "r", encoding="utf-8") as f:
+                            content += "\n\n" + f.read()
+            else:
+                content += "\n"
+
             output_path = (
                 os.path.join(self.output_dir, subdir) if subdir else self.output_dir
             )

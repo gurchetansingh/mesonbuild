@@ -3,6 +3,8 @@
 [project]
 project_name = 'aosp_mesa3d'
 build_system = 'soong'
+# Modules defined here must relative to the root
+handwritten_modules = 'gfxstream_workaround.bp'
 
 [copyright]
 license_name = "external_mesa3d_license"
@@ -12,8 +14,6 @@ license_texts = ["LICENSE"]
 [target_renames]
 vulkan_lvp = "vulkan.lvp"
 vulkan_gfxstream = "vulkan.ranchu"
-mesa_util = "mesa.util"
-mesa_util_c11 = "mesa3d.util.c11"
 
 [custom_target]
 [custom_target.workarounds]

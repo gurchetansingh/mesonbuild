@@ -27,9 +27,11 @@ class ConvertProjectConfig:
         self,
         config_data: T.Dict[str, T.Any],
         dependencies: AbstractDependencies,
+        config_dir: str = "",
     ):
         self._toml_data = config_data
         self.dependencies = dependencies
+        self.config_dir = config_dir
 
     @property
     def build_system(self) -> str:
@@ -38,6 +40,10 @@ class ConvertProjectConfig:
     @property
     def project_name(self) -> str:
         return T.cast(str, self._toml_data.get("project", {}).get("project_name", ""))
+
+    @property
+    def handwritten_modules(self) -> T.Optional[str]:
+        return T.cast(T.Optional[str], self._toml_data.get("project", {}).get("handwritten_modules"))
 
     @property
     def copyright(self) -> T.Dict[str, T.Any]:
