@@ -23,12 +23,21 @@ class CompilerInfo:
 
 
 @dataclass
+class WrapInfo:
+    source_url: str
+    source_filename: str
+    source_hash: str
+    binaries: T.Dict[str, str]
+
+
+@dataclass
 class Toolchain:
     name: str
     host_machine: HostMachine
     c: CompilerInfo
     cpp: CompilerInfo
     rust: T.Optional[CompilerInfo] = None
+    wrap: T.Optional[WrapInfo] = None
     c_compiles_fails: T.List[str] = field(default_factory=list)
     c_links_fails: T.List[str] = field(default_factory=list)
     c_headers_fails: T.List[str] = field(default_factory=list)

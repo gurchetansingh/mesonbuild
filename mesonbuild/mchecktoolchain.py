@@ -8,6 +8,7 @@ import typing as T
 
 from . import mlog
 from .check_toolchain.android import generate_android_toolchains
+from .check_toolchain.fuchsia import generate_fuchsia_toolchains
 from .check_toolchain.defs import Toolchain
 from .check_toolchain.emitter import ToolchainEmitter
 from .check_toolchain.checker import run_compiler_checks
@@ -19,17 +20,13 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--cross-file")
     group.add_argument("--android-ndk-path")
+    group.add_argument("--fuchsia-clang-instance-id")
+    parser.add_argument("--fuchsia-core-sdk-instance-id")
 
 
 def run(options: argparse.Namespace) -> int:
     toolchains: T.List[Toolchain] = []
     output_filename = options.output
-
-    if options.cross_file and options.android_ndk_path:
-        mlog.error(
-            "Cannot use --cross-file and --android-ndk-path options at the same time."
-        )
-        return 1
 
     if options.cross_file:
         if not options.name:
@@ -44,6 +41,17 @@ def run(options: argparse.Namespace) -> int:
             output_filename = "aosp.toolchain.toml"
         toolchains = generate_android_toolchains(
             options.android_ndk_path, run_compiler_checks
+        )
+    elif options.fuchsia_clang_instance_id:
+        if not options.fuchsia_core_sdk_instance_id:
+            mlog.error("Must specify --fuchsia-core-sdk-instance-id when using --fuchsia-clang-instance-id.")
+            return 1
+        if output_filename is None:
+            output_filename = "fuchsia.toolchain.toml"
+        toolchains = generate_fuchsia_toolchains(
+            options.fuchsia_clang_instance_id,
+            options.fuchsia_core_sdk_instance_id,
+            run_compiler_checks
         )
     else:
         name = options.name or "native"

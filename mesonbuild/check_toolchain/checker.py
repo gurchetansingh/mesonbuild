@@ -207,7 +207,7 @@ def run_compiler_checks(
         if not cc.has_header_symbol(
             "time.h", "struct timespec", "", extra_args=c_flags
         )[0]:
-            results.c_header_symbols_fails["time.h"] = ["struct timespec"]
+            results.c_header_symbols_fails["time.h"] = ["\"struct timespec\""]
 
         if not cc.has_header_symbol(
             "errno.h", "program_invocation_name", "", extra_args=c_flags

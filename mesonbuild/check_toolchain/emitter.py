@@ -50,6 +50,15 @@ class ToolchainEmitter:
             output.append(f'linker_id = "{toolchain.cpp.linker_id}"')
             output.append(f'version = "{toolchain.cpp.version}"')
 
+            if toolchain.wrap:
+                output.append("\n[toolchain.wrap]")
+                output.append(f'source_url = "{toolchain.wrap.source_url}"')
+                output.append(f'source_filename = "{toolchain.wrap.source_filename}"')
+                output.append(f'source_hash = "{toolchain.wrap.source_hash}"')
+                output.append("\n[toolchain.wrap.binaries]")
+                for name, path in toolchain.wrap.binaries.items():
+                    output.append(f'{name} = "{path}"')
+
             if toolchain.rust:
                 output.append("\n[toolchain.rust]")
                 output.append(f'compiler_id = "{toolchain.rust.compiler_id}"')
