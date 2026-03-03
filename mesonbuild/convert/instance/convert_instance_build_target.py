@@ -6,6 +6,7 @@ from __future__ import annotations
 import typing as T
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 
 from mesonbuild import build
 from mesonbuild.mesonlib import File
@@ -14,9 +15,12 @@ from mesonbuild.options import OptionKey
 from enum import Enum, IntFlag
 
 from mesonbuild.convert.instance.convert_instance_utils import (
+    ConvertDep,
+    ConvertSrc,
     ConvertInstanceFlag,
     ConvertInstanceIncludeDirectory,
     ConvertInstanceFileGroup,
+    determine_filegroup_name,
 )
 from mesonbuild.convert.convert_project_instance import ConvertProjectInstance
 from mesonbuild.convert.convert_project_config import ConvertProjectConfig
@@ -34,6 +38,10 @@ class GeneratedFilesType(IntFlag):
     IMPL = 2
     HEADERS_AND_IMPL = 3  # pylint: disable=implicit-flag-alias
 
+@dataclass
+class CustomTargetInfo:
+    subdir: str = ''
+    files_type: GeneratedFilesType = GeneratedFilesType.UNKNOWN
 
 def _determine_name(
     original_name: str, project_config: ConvertProjectConfig, rust_abi: RustABI
@@ -79,20 +87,20 @@ class ConvertInstanceBuildTarget:
     ):
         self.name: str = ""
 
-        self.static_libs: T.List[str] = []
         self.rust_abi: RustABI = RustABI.NONE
         self.crate_root: str = ""
         self.crate_name: str = ""
         self.src_subdirs: T.Set[str] = set()
         self.rust_edition: T.Optional[str] = None
-        self.proc_macros: T.List[str] = []
+        self.proc_macros: T.List[ConvertDep] = []
 
-        self.srcs: T.List[str] = []
-        self.header_libs: T.List[str] = []
-        self.shared_libs: T.List[str] = []
-        self.whole_static_libs: T.List[str] = []
-        self.generated_headers: T.List[str] = []
-        self.generated_sources: T.List[str] = []
+        self.srcs: T.List[ConvertSrc] = []
+        self.static_libs: T.List[ConvertDep] = []
+        self.header_libs: T.List[ConvertDep] = []
+        self.shared_libs: T.List[ConvertDep] = []
+        self.whole_static_libs: T.List[ConvertDep] = []
+        self.generated_headers: T.List[ConvertDep] = []
+        self.generated_sources: T.List[ConvertDep] = []
         self.c_std: T.Optional[str] = None
         self.cpp_std: T.Optional[str] = None
 
@@ -163,8 +171,16 @@ class ConvertInstanceBuildTarget:
         for file in build_target.sources:
             if not isinstance(file, File):
                 continue
-            fg_name = project_instance.interpreter_info.lookup_assignment(file)
-            if fg_name is not None and file.subdir != self.subdir:
+
+            needs_filegroup = (
+                file.subdir != self.subdir or file.fname != os.path.basename(file.fname)
+            )
+
+            if needs_filegroup:
+                fg_name = project_instance.interpreter_info.lookup_assignment(file)
+                if file.fname != os.path.basename(file.fname):
+                    fg_name = determine_filegroup_name(file.fname)
+
                 if file.fname.endswith(".h"):
                     fg_name = fg_name + "_headers"
                     if fg_name in self.generated_include_dirs:
@@ -185,21 +201,21 @@ class ConvertInstanceBuildTarget:
                         filegroup = ConvertInstanceFileGroup(name=fg_name)
                         filegroup.add_source_file(file, project_instance)
                         self.generated_filegroups[fg_name] = filegroup
-                        self.srcs.append(":" + filegroup.name)
+                        self.srcs.append(ConvertSrc.from_target(filegroup.name, filegroup.subdir))
             else:
                 if not file.fname.endswith(".h") and not file.fname.endswith(".hpp"):
-                    self.srcs.append(file.fname)
+                    self.srcs.append(ConvertSrc(file.fname))
 
         if self.rust_abi != RustABI.NONE:
             for s in self.srcs:
-                if os.path.basename(s) == "lib.rs":
-                    self.crate_root = s
+                if os.path.basename(s.source) == "lib.rs":
+                    self.crate_root = s.source
                     break
             if not self.crate_root and self.srcs:
-                self.crate_root = self.srcs[0]
+                self.crate_root = self.srcs[0].source
 
             for s in self.srcs:
-                self.src_subdirs.add(os.path.dirname(s))
+                self.src_subdirs.add(os.path.dirname(s.source))
 
     def _handle_external_dependencies(
         self,
@@ -217,20 +233,26 @@ class ConvertInstanceBuildTarget:
                 if not project_config.is_dependency_necessary(d.name):
                     continue
 
-                assert dep_info is not None
+                repo_name = dep_info[0].get("repo_name", '')
+                subdir = dep_info[0].get("subdir", '')
                 target_name = dep_info[0].get("target_name")
+                source_url = dep_info[0].get("source_url", '')
+                source_filename = dep_info[0].get("source_filename", '')
+                source_hash = dep_info[0].get("source_hash")
                 is_proc_macro = dep_info[0].get("proc_macro", False)
 
+                dep = ConvertDep(target_name, subdir, repo_name,
+                                 source_url, source_filename, source_hash)
                 if d.name in project_config.dependencies.header_libraries:
-                    self.header_libs.append(target_name)
+                    self.header_libs.append(dep)
                 elif d.name in project_config.dependencies.static_libraries:
                     if is_proc_macro:
-                        self.proc_macros.append(target_name)
+                        self.proc_macros.append(dep)
                     else:
-                        self.static_libs.append(target_name)
+                        self.static_libs.append(dep)
                 else:
                     if project_config.is_dependency_necessary(target_name):
-                        self.shared_libs.append(target_name)
+                        self.shared_libs.append(dep)
             elif isinstance(d, dependency_base.InternalDependency):
                 # meson likes to put link + compile args as internal dependencies
                 # for some reason
@@ -270,35 +292,30 @@ class ConvertInstanceBuildTarget:
         build_target: build.BuildTarget,
         project_config: ConvertProjectConfig,
     ) -> None:
-        target_mapping: T.Dict[str, GeneratedFilesType] = defaultdict(
-            lambda: GeneratedFilesType.UNKNOWN
-        )
+        target_mapping: T.Dict[str, CustomTargetInfo] = defaultdict(CustomTargetInfo)
         for obj in build_target.get_generated_sources():
+            targets_to_process = []
             if isinstance(obj, build.CustomTarget):
-                # Is there a better way to do this?
+                targets_to_process.append((obj, obj.outputs))
                 for dep in obj.extra_depends:
                     if isinstance(dep, build.CustomTarget):
-                        target_mapping[dep.name] |= _determine_files_type(
-                            T.cast(T.List[str], dep.outputs)
-                        )
-
-                target_mapping[obj.name] |= _determine_files_type(
-                    T.cast(T.List[str], obj.outputs)
-                )
+                        targets_to_process.append((dep, dep.outputs))
             elif isinstance(obj, build.CustomTargetIndex):
-                custom_target = obj.target
-                index = custom_target.outputs.index(obj.output)
-                output = custom_target.outputs[index]
-                target_mapping[custom_target.name] |= _determine_files_type(
-                    [T.cast(str, output)]
-                )
+                targets_to_process.append((obj.target, [obj.output]))
 
-        for target_name, files_type in target_mapping.items():
-            sanitized_name = _determine_name(target_name, project_config, self.rust_abi)
-            if files_type & GeneratedFilesType.HEADERS != 0:
-                self.generated_headers.append(sanitized_name)
-            if files_type & GeneratedFilesType.IMPL != 0:
-                self.generated_sources.append(sanitized_name)
+            for target, outputs in targets_to_process:
+                info = target_mapping[target.name]
+                info.subdir = target.subdir
+                info.files_type |= _determine_files_type(T.cast(T.List[str], outputs))
+
+        for name, info in target_mapping.items():
+            sanitized_name = _determine_name(name, project_config, self.rust_abi)
+            dep = ConvertDep(sanitized_name, info.subdir)
+
+            if info.files_type & GeneratedFilesType.HEADERS:
+                self.generated_headers.append(dep)
+            if info.files_type & GeneratedFilesType.IMPL:
+                self.generated_sources.append(dep)
 
     def _handle_internal_dependencies(
         self,
@@ -316,7 +333,7 @@ class ConvertInstanceBuildTarget:
                 target.name, project_config, target_rust_abi
             )
             if isinstance(target, build.BuildTarget):
-                self.whole_static_libs.append(sanitized_name)
+                self.whole_static_libs.append(ConvertDep(sanitized_name, target.subdir))
 
         for linked_target in build_target.get_all_linked_targets():
             if not isinstance(linked_target, build.BuildTarget):
@@ -328,12 +345,13 @@ class ConvertInstanceBuildTarget:
             sanitized_name = _determine_name(
                 linked_target.name, project_config, target_rust_abi
             )
+            dep = ConvertDep(sanitized_name, linked_target.subdir)
             if isinstance(linked_target, build.StaticLibrary):
-                if sanitized_name not in self.static_libs or self.whole_static_libs:
-                    self.static_libs.append(sanitized_name)
+                if dep not in self.static_libs or self.whole_static_libs:
+                    self.static_libs.append(dep)
             elif isinstance(linked_target, build.SharedLibrary):
-                if sanitized_name not in self.shared_libs:
-                    self.shared_libs.append(sanitized_name)
+                if dep not in self.shared_libs:
+                    self.shared_libs.append(dep)
 
     def _handle_linker_args(
         self,

@@ -18,6 +18,8 @@ from mesonbuild.convert.common_defs import (
 )
 
 from mesonbuild.convert.instance.convert_instance_utils import (
+    ConvertDep,
+    ConvertSrc,
     ConvertInstanceFlag,
     ConvertInstanceIncludeDirectory,
     ConvertInstanceFileGroup,
@@ -44,9 +46,39 @@ from mesonbuild.convert.instance.convert_instance_custom_target import (
     ConvertCustomTargetCmdPartType,
 )
 
+def _get_bazel_targets(convert_deps: T.List[ConvertDep], backend: BazelBackend) -> T.List[str]:
+    bazel_targets: T.List[str] = []
+    for dep in convert_deps:
+        if dep.repo:
+            if dep.subdir:
+                bazel_target = f"@{dep.repo}//{dep.subdir}:{dep.target}"
+            else:
+                bazel_target = f"@{dep.repo}//:{dep.target}"
+            if dep.source_url:
+                backend.external_deps.add(dep)
+        else:
+            bazel_target = f"//{dep.subdir}:{dep.target}"
+
+        bazel_targets.append(bazel_target)
+
+    return bazel_targets
+
+def _get_bazel_sources(convert_srcs: T.List[ConvertSrc], backend: BazelBackend) -> T.List[str]:
+    bazel_srcs: T.List[str] = []
+    for src in convert_srcs:
+        if src.target_dep:
+            bazel_srcs.extend(_get_bazel_targets([src.target_dep], backend))
+        else:
+            bazel_srcs.append(src.source)
+
+    return bazel_srcs
+
 
 class BazelBackend(ConvertBackend):
     """Bazel backend for build system conversion."""
+    def __init__(self) -> None:
+        self.converted_custom_targets: T.Dict[str, T.Tuple[str, str]] = {}
+        self.external_deps: T.Set[ConvertDep] = set()
 
     def get_os_info(
         self, toolchain: AbstractToolchainInfo, choice: MachineChoice
@@ -68,10 +100,11 @@ class BazelBackend(ConvertBackend):
         self, target: ConvertPythonTarget, instance: ConvertInstancePythonTarget
     ) -> None:
         target.module_type = "py_binary"
-        target.single_attributes[ConvertAttr.PYTHON_MAIN] = f'"{instance.main}"'
-        target.get_attribute_node(ConvertAttr.SRCS).add_common_values(instance.srcs)
+        bazel_main = _get_bazel_sources([instance.main], self)[0]
+        target.single_attributes[ConvertAttr.PYTHON_MAIN] = f'"{bazel_main}"'
+        target.get_attribute_node(ConvertAttr.SRCS).add_common_values(_get_bazel_sources(instance.srcs, self))
         target.get_attribute_node(ConvertAttr.BAZEL_DEPS).add_common_values(
-            instance.libs
+            [f"//:{lib}" for lib in instance.libs]
         )
 
     def add_flag_config(
@@ -122,11 +155,23 @@ class BazelBackend(ConvertBackend):
         for p in convert_instance_cmds:
             if isinstance(p, ConvertCustomTargetCmdPart):
                 if p.cmd_type == ConvertCustomTargetCmdPartType.TOOL:
-                    final_cmd.append(f"$(location {p.cmd})")
+                    if p.src:
+                        bazel_src = _get_bazel_sources([p.src], self)[0]
+                        final_cmd.append(f"$(location {bazel_src})")
+                    else:
+                        final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.PYTHON_BINARY:
-                    final_cmd.append(f"$(location {p.cmd})")
+                    if p.src:
+                        bazel_src = _get_bazel_sources([p.src], self)[0]
+                        final_cmd.append(f"$(location {bazel_src})")
+                    else:
+                        final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.INPUT:
-                    final_cmd.append(f"$(location {p.cmd})")
+                    if p.src:
+                        bazel_src = _get_bazel_sources([p.src], self)[0]
+                        final_cmd.append(f"$(location {bazel_src})")
+                    else:
+                        final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.OUTPUT:
                     final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.STRING:
@@ -149,8 +194,8 @@ class BazelBackend(ConvertBackend):
         # We store the cmd on the target object itself for the emitter
         out = ct.generated_headers + ct.generated_sources
         target.get_attribute_node(ConvertAttr.OUT).add_common_values(out)
-        target.get_attribute_node(ConvertAttr.SRCS).add_common_values(ct.srcs)
-        target.get_attribute_node(ConvertAttr.TOOLS).add_common_values(ct.tools)
+        target.get_attribute_node(ConvertAttr.SRCS).add_common_values(_get_bazel_sources(ct.srcs, self))
+        target.get_attribute_node(ConvertAttr.TOOLS).add_common_values(_get_bazel_sources(ct.tools, self))
         target.cmd = self._get_custom_target_cmd(ct.convert_instance_cmds)
 
     def add_build_target_config(
@@ -168,16 +213,16 @@ class BazelBackend(ConvertBackend):
         all_deps = (
             list(instance.generated_flags)
             + list(instance.generated_include_dirs)
-            + instance.header_libs
-            + instance.static_libs
-            + instance.shared_libs
-            + instance.whole_static_libs
-            + instance.generated_headers
-            + instance.generated_sources
+            + _get_bazel_targets(instance.header_libs, self)
+            + _get_bazel_targets(instance.static_libs, self)
+            + _get_bazel_targets(instance.shared_libs, self)
+            + _get_bazel_targets(instance.whole_static_libs, self)
+            + _get_bazel_targets(instance.generated_headers, self)
+            + _get_bazel_targets(instance.generated_sources, self)
         )
 
         target.get_attribute_node(ConvertAttr.SRCS).add_conditional_values(
-            label, instance.srcs
+            label, _get_bazel_sources(instance.srcs, self)
         )
         target.get_attribute_node(ConvertAttr.BAZEL_DEPS).add_conditional_values(
             label, all_deps

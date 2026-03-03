@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 import typing as T
-from mesonbuild.mesonlib import File
-from mesonbuild import build
+from dataclasses import dataclass
 import os
 
+from mesonbuild.mesonlib import File
+from mesonbuild import build
 from mesonbuild.convert.convert_project_instance import ConvertProjectInstance
 
 
@@ -38,6 +39,30 @@ def _add_file_to_group(
     full_path = os.path.join(normalized_path, os.path.basename(new_file.fname))
     new_paths.append(os.path.relpath(full_path, new_subdir))
     return new_subdir, new_paths
+
+def determine_filegroup_name(source: str):
+    root, ext = os.path.splitext(source)
+    name = os.path.basename(root) + "_" + ext[1:]
+    return name
+
+
+@dataclass(frozen=True)
+class ConvertDep:
+    target: str
+    subdir: str = ''
+    repo: str = ''
+    source_url: str = ''
+    source_filename: str = ''
+    source_hash: str = ''
+
+@dataclass(frozen=True)
+class ConvertSrc:
+    source: str
+    target_dep: T.Optional[ConvertDep] = None
+
+    @staticmethod
+    def from_target(target_name: str, target_subdir: str) -> ConvertSrc:
+        return ConvertSrc('', ConvertDep(target_name, target_subdir))
 
 
 class ConvertInstanceFlag:
@@ -125,5 +150,4 @@ class ConvertInstanceFileGroup:
             file, project_instance, self.subdir, self.srcs
         )
         if self.name is None:
-            root, ext = os.path.splitext(self.srcs[0])
-            self.name = root + "_" + ext[1:]
+            self.name = determine_filegroup_name(self.srcs[0])

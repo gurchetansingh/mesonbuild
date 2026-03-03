@@ -1,0 +1,40 @@
+# Copyright 2026 The Meson Development Team
+# SPDX-License-Identifier: Apache-2.0
+
+[[toolchain]]
+name = "arm_gnu_linux_x86_64"
+
+[toolchain.wrap]
+source_url = "https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1/binrel/arm-gnu-toolchain-13.2.rel1-x86_64-arm-none-eabi.tar.xz"
+source_hash = "6cd1dbc1343792ba2739590747f5cf57f79c29d2f50d32101f33f303e1e27ce6"
+source_filename = "arm-gnu-toolchain-13.2.rel1-x86_64-arm-none-eabi.tar.xz"
+
+[toolchain.wrap.binaries]
+cc = "bin/arm-none-eabi-c"
+cpp = "bin/arm-none-eabi-cpp"
+ld = "bin/arm-none-eabi-ld"
+ar = "bin/arm-none-eabi-ar"
+nm = "bin/arm-none-eabi-nm"
+objcopy = "bin/arm-none-eabi-objcopy"
+strip = "bin/arm-none-eabi-strip"
+as = "bin/arm-none-eabi-as"
+toolchain_id = "arm-none-eabi"
+
+[toolchain.host_machine]
+cpu_family = "aarch64"
+cpu = "armv8"
+system = "linux"
+endian = "little"
+
+[toolchain.c]
+compiler_id = "clang"
+linker_id = "ld.lld"
+version = "18.0.3"
+
+[toolchain.cpp]
+compiler_id = "clang"
+linker_id = "ld.lld"
+version = "18.0.3"
+
+[toolchain.c.has_function.fails]
+qsort_s = true

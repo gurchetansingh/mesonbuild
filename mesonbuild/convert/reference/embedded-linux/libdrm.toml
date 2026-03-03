@@ -1,0 +1,25 @@
+# Copyright 2026 The Meson Development Team
+# SPDX-License-Identifier: Apache-2.0
+[project]
+project_name = 'embedded_linux_libdrm'
+build_system = 'bazel'
+
+[copyright]
+license_name = "embedded_linux_license"
+licenses = ["BSD-2-Clause"]
+license_texts = ["LICENSE"]
+
+[[config]]
+config_name = 'embedded_linux_libdrm_drivers'
+
+[config.toolchains]
+host_toolchains = ["arm_gnu_linux_x86_64"]
+build_toolchains = ["arm_gnu_linux_x86_64"]
+
+[config.static_options]
+intel = "disabled"
+nouveau = "disabled"
+radeon = "disabled"
+amdgpu = "disabled"
+freedreno = "disabled"
+etnaviv = "disabled"

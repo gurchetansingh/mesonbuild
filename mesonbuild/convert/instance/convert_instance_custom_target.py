@@ -12,6 +12,8 @@ from mesonbuild import build, programs
 from mesonbuild.mesonlib import File, MesonException
 
 from mesonbuild.convert.instance.convert_instance_utils import (
+    determine_filegroup_name,
+    ConvertSrc,
     ConvertInstanceFileGroup,
 )
 from mesonbuild.convert.convert_project_instance import ConvertProjectInstance
@@ -30,7 +32,11 @@ class ConvertCustomTargetCmdPartType(Enum):
 class ConvertCustomTargetCmdPart:
     cmd: str
     cmd_type: ConvertCustomTargetCmdPartType
+    src: T.Optional[ConvertSrc] = None
 
+    @staticmethod
+    def from_convert_src(source: ConvertSrc) -> ConvertCustomTargetCmdPart:
+        return ConvertCustomTargetCmdPart('', ConvertCustomTargetCmdPartType.INPUT, source)
 
 def get_component_dirs(subdir: str) -> T.List[str]:
     parts = subdir.split("/")
@@ -73,10 +79,10 @@ def python_script_to_binary(input_str: str) -> str:
 
 @dataclass
 class ConvertInstancePythonTarget:
-    main: str = ""
+    main: ConvertSrc
     subdir: str = ""
     name: str = ""
-    srcs: T.List[str] = field(default_factory=list)
+    srcs: T.List[ConvertSrc] = field(default_factory=list)
     libs: T.List[str] = field(default_factory=list)
 
 
@@ -89,12 +95,14 @@ class ConvertInstanceCustomTarget:
         project_instance: ConvertProjectInstance,
         project_config: ConvertProjectConfig,
     ) -> None:
-        self.is_python = False
-        self.python_depend_files: T.List[str] = []
+        self.tools: T.List[ConvertSrc] = []
+        self.srcs: T.List[ConvertSrc] = []
 
-        self.tools: T.List[str] = []
-        self.srcs: T.List[str] = []
-        self.python_script: T.Optional[str] = None
+        self.tool_subdir = ''
+        self.is_python = False
+        self.python_script: T.Optional[ConvertSrc] = None
+        self.python_depend_files: T.List[ConvertSrc] = []
+
         self.generated_headers: T.List[str] = []
         self.generated_sources: T.List[str] = []
         self.export_include_dirs: T.List[str] = []
@@ -107,9 +115,6 @@ class ConvertInstanceCustomTarget:
         self.project_instance = project_instance
         self.project_config = project_config
         self._parse_custom_target(custom_target)
-
-    def __repr__(self) -> str:
-        return f"(name='{self.name}', subdir='{self.subdir}')"
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, ConvertInstanceCustomTarget):
@@ -126,11 +131,8 @@ class ConvertInstanceCustomTarget:
         if self.python_script is None:
             return None
 
-        python_target = ConvertInstancePythonTarget()
-        python_target.main = self.python_script
-        python_target.name = self.tools[0]
-        python_target.subdir = self.subdir
-        python_target.srcs = self.python_depend_files
+        python_target = ConvertInstancePythonTarget(self.python_script, self.tool_subdir,
+                                                    self.tools[0].target_dep.target, self.python_depend_files)
         if self.project_config.dependencies.programs:
             tool_config = (
                 self.project_config.dependencies.programs.get("python3")
@@ -147,7 +149,7 @@ class ConvertInstanceCustomTarget:
         if custom_target.env:
             for key, val in custom_target.env.get_env({}).items():
                 sanitized_val = self.project_instance.normalize_string(
-                    val, custom_target.subdir
+                    val, self.subdir
                 )
                 assert sanitized_val is not None
                 env_cmd = f"{key}={sanitized_val}"
@@ -163,11 +165,10 @@ class ConvertInstanceCustomTarget:
 
         This method orchestrates the parsing of a raw `build.CustomTarget` from
         Meson. It delegates the analysis of the target's command, outputs, and
-        dependencies to various `_handle_*` methods. These methods are
-        responsible for translating the different parts of the custom target into a
-        build-system-agnostic representation, including identifying tools, inputs,
-        outputs, and applying any necessary workarounds defined in the project's
-        configuration.
+        dependencies to various `_handle_*` methods. 
+
+        These methods are responsible for translating the different parts of the
+        custom target into a build-system-agnostic representation..
         """
         self._handle_environment(custom_target)
 
@@ -213,15 +214,15 @@ class ConvertInstanceCustomTarget:
             self.convert_instance_cmds.append(
                 ConvertCustomTargetCmdPart(output, ConvertCustomTargetCmdPartType.INPUT)
             )
-            self.srcs.append(output)
+            self.srcs.append(ConvertSrc(output))
         elif isinstance(src, str):
             raise MesonException(f"Type: {type(src)} not handled, exiting...")
 
     def _handle_file(self, file: File, custom_target: build.CustomTarget) -> None:
-        name = file.fname
         needs_filegroup = (
-            file.subdir != custom_target.subdir or name != os.path.basename(name)
+            file.subdir != self.subdir or file.fname != os.path.basename(file.fname)
         )
+
         if needs_filegroup:
             fg_name = self.project_instance.interpreter_info.lookup_assignment(file)
             if fg_name is not None:
@@ -234,40 +235,47 @@ class ConvertInstanceCustomTarget:
                     filegroup.add_source_file(file, self.project_instance)
                     self.generated_filegroups[fg_name] = filegroup
             else:
+                fg_name = determine_filegroup_name(file.fname)
                 filegroup = ConvertInstanceFileGroup()
                 filegroup.add_source_file(file, self.project_instance)
                 fg_name = filegroup.name
                 self.generated_filegroups[fg_name] = filegroup
 
-            needs_filegroup = True
-            name = ":" + fg_name
+            subdir = self.generated_filegroups[fg_name].subdir
+            src = ConvertSrc.from_target(fg_name, subdir)
+        else:
+            src = ConvertSrc(file.fname)
+            subdir = file.subdir
 
         if is_python_script(file.fname) and self.python_script is None:
-            self.python_script = os.path.basename(file.fname)
+            self.python_script = ConvertSrc.from_target(os.path.basename(file.fname), subdir)
             python_binary = python_script_to_binary(file.fname)
             if python_binary in self.tools:
                 return
 
-            self.python_depend_files.append(name)
-            self.tools.append(python_binary)
+            self.tool_subdir = subdir
+            self.python_depend_files.append(src)
+            self.srcs.append(src)
+
+            tool_src = ConvertSrc.from_target(python_binary, self.tool_subdir)
+            self.tools.append(tool_src)
             self.convert_instance_cmds.append(
                 ConvertCustomTargetCmdPart(
-                    python_binary, ConvertCustomTargetCmdPartType.PYTHON_BINARY
+                    python_binary, ConvertCustomTargetCmdPartType.PYTHON_BINARY, tool_src
                 )
             )
-        elif name not in self.srcs:
+        elif src not in self.srcs:
             if file not in custom_target.depend_files:
                 self.convert_instance_cmds.append(
-                    ConvertCustomTargetCmdPart(
-                        name, ConvertCustomTargetCmdPartType.INPUT
-                    )
+                    ConvertCustomTargetCmdPart.from_convert_src(src)
                 )
-                self.srcs.append(name)
+                self.srcs.append(src)
             elif is_python_script(file.fname):
-                if name not in self.python_depend_files:
-                    self.python_depend_files.append(name)
+                if src not in self.python_depend_files:
+                    self.python_depend_files.append(src)
             else:
-                self.srcs.append(name)
+                self.srcs.append(src)
+
 
     def _handle_program(self, program: programs.ExternalProgram) -> None:
         prog_name = program.get_name()
@@ -275,12 +283,15 @@ class ConvertInstanceCustomTarget:
             return
 
         if is_python_script(prog_name):
-            self.python_script = prog_name
+            self.python_script = ConvertSrc(prog_name)
+            self.tool_subdir = self.subdir
+
             python_binary = python_script_to_binary(prog_name)
-            self.tools.append(python_binary)
+            tool_src = ConvertSrc.from_target(python_binary, self.tool_subdir)
+            self.tools.append(tool_src)
             self.convert_instance_cmds.append(
                 ConvertCustomTargetCmdPart(
-                    python_binary, ConvertCustomTargetCmdPartType.PYTHON_BINARY
+                    python_binary, ConvertCustomTargetCmdPartType.PYTHON_BINARY, tool_src
                 )
             )
         else:
@@ -295,10 +306,11 @@ class ConvertInstanceCustomTarget:
                 if prog_config and "path" in prog_config:
                     tool_name = prog_config["path"]
 
-                self.tools.append(tool_name)
+                tool_src = ConvertSrc.from_target(tool_name, '')
+                self.tools.append(tool_src)
                 self.convert_instance_cmds.append(
                     ConvertCustomTargetCmdPart(
-                        tool_name, ConvertCustomTargetCmdPartType.TOOL
+                        tool_name, ConvertCustomTargetCmdPartType.TOOL, tool_src
                     )
                 )
 
@@ -325,7 +337,7 @@ class ConvertInstanceCustomTarget:
             )
         else:
             normalized_string = self.project_instance.normalize_string(
-                command_string, custom_target.subdir
+                command_string, self.subdir
             )
             assert normalized_string is not None
             processed_string = self._handle_normalized_string(
@@ -355,8 +367,8 @@ class ConvertInstanceCustomTarget:
                 # Install dir undefined for hermetic builds for now
                 self.skip_custom_target = True
             elif "@DEPFILE@" in part:
-                depfile = custom_target.get_dep_outname(self.srcs)  # type: ignore
-                sanitized_parts.append(part.replace("@DEPFILE@", depfile))
+                # We should do something here, but we don't.
+                pass
             else:
                 sanitized_parts.append(part)
 
@@ -388,4 +400,4 @@ class ConvertInstanceCustomTarget:
                     cmd_part.cmd = os.path.join(self.subdir, cmd_part.cmd)
 
         self.generated_headers = prefixed_headers
-        self.export_include_dirs = get_component_dirs(custom_target.subdir)
+        self.export_include_dirs = get_component_dirs(self.subdir)

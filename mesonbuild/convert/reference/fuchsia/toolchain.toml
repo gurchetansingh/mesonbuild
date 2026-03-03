@@ -1,24 +1,236 @@
 # Copyright 2026 The Meson Development Team
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier-Apache-2.0
 
 [[toolchain]]
-name = "linux_fuchsia_arm64"
+name = "fuchsia_x86_64"
 
 [toolchain.host_machine]
-cpu_family = "aarch64"
-cpu = "armv8"
+cpu_family = "x86_64"
+cpu = "x86_64"
 system = "fuchsia"
 endian = "little"
 
 [toolchain.c]
 compiler_id = "clang"
 linker_id = "ld.lld"
-version = "18.0.3"
+version = "23.0.0"
 
 [toolchain.cpp]
 compiler_id = "clang"
 linker_id = "ld.lld"
-version = "18.0.3"
+version = "23.0.0"
+
+[toolchain.wrap]
+source_url = "https://chrome-infra-packages.appspot.com/dl/fuchsia/third_party/clang/linux-amd64/+/Px9Uxp4ltvVYPpPGjq1qI6bkaCzi9Qrr6gDRZPjWu8MC"
+source_filename = "fuchsia-clang-linux-amd64.zip"
+source_hash = "3f1f54c69e25b6f5583e93c68ead6a23a6e4682ce2f50aebea00d164f8d6bbc3"
+
+[toolchain.wrap.binaries]
+cc = "bin/clang"
+cpp = "bin/clang++"
+ld = "bin/ld.lld"
+ar = "bin/llvm-ar"
+nm = "bin/llvm-nm"
+objcopy = "bin/llvm-objcopy"
+objdump = "bin/llvm-objdump"
+gcov = "bin/llvm-cov"
+strip = "bin/llvm-strip"
+as = "bin/llvm-as"
+toolchain_id = "clang-fuchsia"
+
+[toolchain.rust]
+compiler_id = "rustc"
+linker_id = "ld.lld"
+version = "1.90.0"
+
+[toolchain.c.links.fails]
+"GCC 64bit atomics" = true
+"xlocale" = true
+
+[toolchain.c.check_header.fails]
+"xlocale.h" = true
+"linux/futex.h" = true
+"linux/udmabuf.h" = true
+"pthread_np.h" = true
+
+[toolchain.c.has_header_symbol.fails]
+"sys/sysmacros.h" = { major = true, minor = true, makedev = true }
+"sys/mkdev.h" = { major = true, minor = true, makedev = true }
+"errno.h" = { program_invocation_name = true }
 
 [toolchain.c.has_function.fails]
+ffs = true
+ffsll = true
+getrandom = true
 qsort_s = true
+secure_getenv = true
+pthread_setaffinity_np = true
+reallocarray = true
+__builtin_add_overflow_p = true
+__builtin_sub_overflow_p = true
+
+[toolchain.c.supported_arguments.fails]
+args = [
+    "-Wno-nonnull-compare",
+]
+
+[toolchain.cpp.supported_arguments.fails]
+args = [
+    "-flifetime-dse=1",
+]
+
+[[toolchain]]
+name = "fuchsia_aarch64"
+
+[toolchain.host_machine]
+cpu_family = "aarch64"
+cpu = "aarch64"
+system = "fuchsia"
+endian = "little"
+
+[toolchain.c]
+compiler_id = "clang"
+linker_id = "ld.lld"
+version = "23.0.0"
+
+[toolchain.cpp]
+compiler_id = "clang"
+linker_id = "ld.lld"
+version = "23.0.0"
+
+[toolchain.wrap]
+source_url = "https://chrome-infra-packages.appspot.com/dl/fuchsia/third_party/clang/linux-amd64/+/Px9Uxp4ltvVYPpPGjq1qI6bkaCzi9Qrr6gDRZPjWu8MC"
+source_filename = "fuchsia-clang-linux-amd64.zip"
+source_hash = "3f1f54c69e25b6f5583e93c68ead6a23a6e4682ce2f50aebea00d164f8d6bbc3"
+
+[toolchain.wrap.binaries]
+cc = "bin/clang"
+cpp = "bin/clang++"
+ld = "bin/ld.lld"
+ar = "bin/llvm-ar"
+nm = "bin/llvm-nm"
+objcopy = "bin/llvm-objcopy"
+objdump = "bin/llvm-objdump"
+gcov = "bin/llvm-cov"
+strip = "bin/llvm-strip"
+as = "bin/llvm-as"
+toolchain_id = "clang-fuchsia"
+
+[toolchain.rust]
+compiler_id = "rustc"
+linker_id = "ld.lld"
+version = "1.90.0"
+
+[toolchain.c.links.fails]
+"GCC 64bit atomics" = true
+"xlocale" = true
+
+[toolchain.c.check_header.fails]
+"xlocale.h" = true
+"linux/futex.h" = true
+"linux/udmabuf.h" = true
+"pthread_np.h" = true
+
+[toolchain.c.has_header_symbol.fails]
+"sys/sysmacros.h" = { major = true, minor = true, makedev = true }
+"sys/mkdev.h" = { major = true, minor = true, makedev = true }
+"errno.h" = { program_invocation_name = true }
+
+[toolchain.c.has_function.fails]
+ffs = true
+ffsll = true
+getrandom = true
+qsort_s = true
+secure_getenv = true
+pthread_setaffinity_np = true
+reallocarray = true
+__builtin_add_overflow_p = true
+__builtin_sub_overflow_p = true
+
+[toolchain.c.supported_arguments.fails]
+args = [
+    "-Wno-nonnull-compare",
+]
+
+[toolchain.cpp.supported_arguments.fails]
+args = [
+    "-flifetime-dse=1",
+]
+
+[[toolchain]]
+name = "fuchsia_riscv"
+
+[toolchain.host_machine]
+cpu_family = "riscv64"
+cpu = "riscv64"
+system = "fuchsia"
+endian = "little"
+
+[toolchain.c]
+compiler_id = "clang"
+linker_id = "ld.lld"
+version = "23.0.0"
+
+[toolchain.cpp]
+compiler_id = "clang"
+linker_id = "ld.lld"
+version = "23.0.0"
+
+[toolchain.wrap]
+source_url = "https://chrome-infra-packages.appspot.com/dl/fuchsia/third_party/clang/linux-amd64/+/Px9Uxp4ltvVYPpPGjq1qI6bkaCzi9Qrr6gDRZPjWu8MC"
+source_filename = "fuchsia-clang-linux-amd64.zip"
+source_hash = "3f1f54c69e25b6f5583e93c68ead6a23a6e4682ce2f50aebea00d164f8d6bbc3"
+
+[toolchain.wrap.binaries]
+cc = "bin/clang"
+cpp = "bin/clang++"
+ld = "bin/ld.lld"
+ar = "bin/llvm-ar"
+nm = "bin/llvm-nm"
+objcopy = "bin/llvm-objcopy"
+objdump = "bin/llvm-objdump"
+gcov = "bin/llvm-cov"
+strip = "bin/llvm-strip"
+as = "bin/llvm-as"
+toolchain_id = "clang-fuchsia"
+
+[toolchain.rust]
+compiler_id = "rustc"
+linker_id = "ld.lld"
+version = "1.90.0"
+
+[toolchain.c.links.fails]
+"GCC 64bit atomics" = true
+"xlocale" = true
+
+[toolchain.c.check_header.fails]
+"xlocale.h" = true
+"linux/futex.h" = true
+"linux/udmabuf.h" = true
+"pthread_np.h" = true
+
+[toolchain.c.has_header_symbol.fails]
+"sys/sysmacros.h" = { major = true, minor = true, makedev = true }
+"sys/mkdev.h" = { major = true, minor = true, makedev = true }
+"errno.h" = { program_invocation_name = true }
+
+[toolchain.c.has_function.fails]
+ffs = true
+ffsll = true
+getrandom = true
+qsort_s = true
+secure_getenv = true
+pthread_setaffinity_np = true
+reallocarray = true
+__builtin_add_overflow_p = true
+__builtin_sub_overflow_p = true
+
+[toolchain.c.supported_arguments.fails]
+args = [
+    "-Wno-nonnull-compare",
+]
+
+[toolchain.cpp.supported_arguments.fails]
+args = [
+    "-flifetime-dse=1",
+]

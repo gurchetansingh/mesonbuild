@@ -289,6 +289,25 @@ class AbstractRustCompiler(AbstractCompiler, RustCompiler):
         self.native_static_libs = []
 
 
+class AbstractToolchainWrap:
+    """Holds information about the toolchain archive and its contents."""
+
+    def __init__(self, wrap_config: T.Dict[str, T.Any]):
+        self.url = wrap_config.get("source_url")
+        self.sha256 = wrap_config.get("source_hash")
+        self.filename = wrap_config.get("source_filename")
+        self.binaries = wrap_config.get("binaries", {})
+        self.strip_prefix = ""
+        if self.filename:
+            # Derive strip_prefix from source_filename
+            for ext in [".tar.gz", ".tar.xz", ".zip"]:
+                if self.filename.endswith(ext):
+                    self.strip_prefix = self.filename[: -len(ext)]
+                    break
+            else:
+                self.strip_prefix = self.filename.split(".")[0]
+
+
 class AbstractToolchainInfo:
     """Holds information about the build and host machines for a toolchain."""
 
@@ -298,6 +317,7 @@ class AbstractToolchainInfo:
         host_machine: str,
         toolchain_config: T.Dict[str, T.Any],
     ):
+        self.name = host_machine
         self.toolchains = PerMachine(build_machine, host_machine)
         self.machine_info = PerMachine(
             MachineInfo.from_literal(
@@ -307,6 +327,8 @@ class AbstractToolchainInfo:
                 toolchain_config.get(host_machine, {}).get("host_machine", {})
             ),
         )
+        wrap_config = toolchain_config.get(host_machine, {}).get("wrap")
+        self.wrap = AbstractToolchainWrap(wrap_config) if wrap_config else None
 
     def host_supported(self) -> bool:
         return (

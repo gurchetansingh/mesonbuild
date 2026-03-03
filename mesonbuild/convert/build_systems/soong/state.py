@@ -23,6 +23,8 @@ from mesonbuild.convert.convert_project_config import (
 )
 
 from mesonbuild.convert.instance.convert_instance_utils import (
+    ConvertDep,
+    ConvertSrc,
     ConvertInstanceFlag,
     ConvertInstanceIncludeDirectory,
     ConvertInstanceFileGroup,
@@ -51,6 +53,22 @@ from mesonbuild.convert.instance.convert_instance_custom_target import (
     ConvertCustomTargetCmdPartType,
 )
 
+def _get_soong_targets(convert_deps: T.List[ConvertDep]) -> T.List[str]:
+    soong_targets: T.List[str] = []
+    for dep in convert_deps:
+        soong_targets.append(dep.target)
+
+    return soong_targets
+
+def _get_soong_sources(convert_srcs: T.List[ConvertSrc]) -> T.List[str]:
+    soong_srcs: T.List[str] = []
+    for src in convert_srcs:
+        if src.target_dep:
+            soong_srcs.append(":" + src.target_dep.target)
+        else:
+            soong_srcs.append(src.source)
+
+    return soong_srcs
 
 def _custom_target_convert(
     custom_target: ConvertInstanceCustomTarget,
@@ -129,8 +147,9 @@ class SoongBackend(ConvertBackend):
         self, target: ConvertPythonTarget, instance: ConvertInstancePythonTarget
     ) -> None:
         target.module_type = "python_binary_host"
-        target.single_attributes[ConvertAttr.PYTHON_MAIN] = f'"{instance.main}"'
-        target.get_attribute_node(ConvertAttr.SRCS).add_common_values(instance.srcs)
+        soong_main = _get_soong_sources([instance.main])[0]
+        target.single_attributes[ConvertAttr.PYTHON_MAIN] = f'"{soong_main}"'
+        target.get_attribute_node(ConvertAttr.SRCS).add_common_values(_get_soong_sources(instance.srcs))
         target.get_attribute_node(ConvertAttr.SOONG_PYTHON_LIBS).add_common_values(
             instance.libs
         )
@@ -215,11 +234,23 @@ class SoongBackend(ConvertBackend):
         for p in convert_instance_cmds:
             if isinstance(p, ConvertCustomTargetCmdPart):
                 if p.cmd_type == ConvertCustomTargetCmdPartType.TOOL:
-                    final_cmd.append(f"$(location {p.cmd})")
+                    if p.src:
+                        soong_src = _get_soong_sources([p.src])[0]
+                        final_cmd.append(f"$(location {soong_src})")
+                    else:
+                        final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.PYTHON_BINARY:
-                    final_cmd.append(f"$(location {p.cmd})")
+                    if p.src:
+                        soong_src = _get_soong_sources([p.src])[0]
+                        final_cmd.append(f"$(location {soong_src})")
+                    else:
+                        final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.INPUT:
-                    final_cmd.append(f"$(location {p.cmd})")
+                    if p.src:
+                        soong_src = _get_soong_sources([p.src])[0]
+                        final_cmd.append(f"$(location {soong_src})")
+                    else:
+                        final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.OUTPUT:
                     final_cmd.append(f"$(location {p.cmd})")
                 elif p.cmd_type == ConvertCustomTargetCmdPartType.STRING:
@@ -260,8 +291,10 @@ class SoongBackend(ConvertBackend):
             target.module_type = "genrule"
             out = ct.generated_headers + ct.generated_sources
             target.get_attribute_node(ConvertAttr.OUT).add_common_values(out)
-            target.get_attribute_node(ConvertAttr.SRCS).add_common_values(ct.srcs)
-            target.get_attribute_node(ConvertAttr.TOOLS).add_common_values(ct.tools)
+            target.get_attribute_node(ConvertAttr.SRCS).add_common_values(_get_soong_sources(ct.srcs))
+            target.get_attribute_node(ConvertAttr.TOOLS).add_common_values(
+                _get_soong_targets([t.target_dep for t in ct.tools if t.target_dep])
+            )
             target.get_attribute_node(ConvertAttr.INCLUDES).add_common_values(
                 ct.export_include_dirs
             )
@@ -295,7 +328,7 @@ class SoongBackend(ConvertBackend):
         label = {arch_select} | {os_select} | custom_instances
 
         target.install |= instance.install
-        header_libs = list(instance.generated_include_dirs) + instance.header_libs
+        header_libs = list(instance.generated_include_dirs) + _get_soong_targets(instance.header_libs)
 
         target.single_attributes[ConvertAttr.SOONG_VENDOR] = "true"
         if toolchain.host_supported():
@@ -321,20 +354,20 @@ class SoongBackend(ConvertBackend):
             modified_gen_headers: T.List[str] = []
             modified_gen_sources: T.List[str] = []
             for header in instance.generated_headers:
-                if header in self.converted_custom_targets:
+                if header.target in self.converted_custom_targets:
                     modified_gen_headers.append(
-                        self.converted_custom_targets[header][0]
+                        self.converted_custom_targets[header.target][0]
                     )
                 else:
-                    modified_gen_headers.append(header)
+                    modified_gen_headers.append(header.target)
 
             for source in instance.generated_sources:
-                if source in self.converted_custom_targets:
+                if source.target in self.converted_custom_targets:
                     modified_gen_sources.append(
-                        self.converted_custom_targets[source][1]
+                        self.converted_custom_targets[source.target][1]
                     )
                 else:
-                    modified_gen_sources.append(source)
+                    modified_gen_sources.append(source.target)
 
             target.get_attribute_node(
                 ConvertAttr.SOONG_GENERATED_HEADERS
@@ -343,17 +376,17 @@ class SoongBackend(ConvertBackend):
                 ConvertAttr.SOONG_GENERATED_SOURCES
             ).add_conditional_values(label, modified_gen_sources)
             target.get_attribute_node(ConvertAttr.SRCS).add_conditional_values(
-                label, instance.srcs
+                label, _get_soong_sources(instance.srcs)
             )
             target.get_attribute_node(
                 ConvertAttr.SOONG_STATIC_LIBRARIES
-            ).add_conditional_values(label, instance.static_libs)
+            ).add_conditional_values(label, _get_soong_targets(instance.static_libs))
             target.get_attribute_node(
                 ConvertAttr.SOONG_SHARED_LIBRARIES
-            ).add_conditional_values(label, instance.shared_libs)
+            ).add_conditional_values(label, _get_soong_targets(instance.shared_libs))
             target.get_attribute_node(
                 ConvertAttr.SOONG_WHOLE_STATIC_LIBRARIES
-            ).add_conditional_values(label, instance.whole_static_libs)
+            ).add_conditional_values(label, _get_soong_targets(instance.whole_static_libs))
         else:
             if instance.rust_edition:
                 target.single_attributes[ConvertAttr.RUST_EDITION] = (
@@ -366,8 +399,8 @@ class SoongBackend(ConvertBackend):
                 f'"{instance.crate_name}"'
             )
             target.get_attribute_node(ConvertAttr.SOONG_RUST_LIBS).add_common_values(
-                instance.static_libs
+                _get_soong_targets(instance.static_libs)
             )
             target.get_attribute_node(ConvertAttr.RUST_PROC_MACROS).add_common_values(
-                instance.proc_macros
+                _get_soong_targets(instance.proc_macros)
             )
