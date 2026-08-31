@@ -157,7 +157,6 @@ class SoongBackend(ConvertBackend):
         label = self.get_label(platform, custom_instances)
         self._set_partition_type(target.single_attributes)
         if platform.is_native():
-            target.single_attributes[ConvertAttr.SOONG_HOST_SUPPORTED] = 'true'
             target.host_supported = True
 
         if instance.project_native_args:
