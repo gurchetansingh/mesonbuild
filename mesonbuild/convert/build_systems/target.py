@@ -102,6 +102,7 @@ class ConvertAttrNode:
         self.grouped_select_instances: T.Dict[str, T.List[T.Set[SelectInstance]]] = defaultdict(
             list
         )
+        self.select_instance_groups: T.List[T.Set[SelectInstance]] = []
         self.all_select_instances: T.Dict[str, T.Set[SelectInstance]] = defaultdict(set)
         self.common_custom_instances: T.Optional[T.Set[SelectInstance]] = None
         self.select_nodes: T.List[SelectNode] = []
@@ -115,20 +116,14 @@ class ConvertAttrNode:
 
     def add_conditional_values(self, label: T.Set[SelectInstance],
                                values: T.List[str]) -> None:  # fmt: skip
-        for select_instance in label:
-            if select_instance.select_id.select_kind is SelectKind.CUSTOM:
-                if self.common_custom_instances is None:
-                    self.common_custom_instances = {select_instance}
-                else:
-                    self.common_custom_instances &= {select_instance}
-
         for value in values:
             self.grouped_select_instances[value].append(label)
             for select_instance in label:
                 self.all_select_instances[value].add(select_instance)
 
     def consolidate_conditionals(self, select_instance_groups: T.List[T.Set[SelectInstance]],
-                                 all_custom_defaults: T.Set[SelectInstance]) -> None:  # fmt: skip
+                                 unvarying_custom_defaults: T.Set[SelectInstance],
+                                 target_seen_labels: T.Set[T.FrozenSet[SelectInstance]]) -> None:  # fmt: skip
         """
         Simplifies and organizes conditional attribute values after all project
         configurations have been processed.
@@ -151,25 +146,46 @@ class ConvertAttrNode:
         `common_values` set. This process ensures that the final build file output is
         as clean and minimal as possible.
         """
+        self.select_instance_groups = select_instance_groups
         for value, labels_list in self.grouped_select_instances.items():
-            processed_labels: T.List[T.Set[SelectInstance]] = []
+            labels_set = set(frozenset(l) for l in labels_list)
+            if target_seen_labels and labels_set == target_seen_labels:
+                if isinstance(self.common_values, list):
+                    if value not in self.common_values:
+                        self.common_values.append(value)
+                else:
+                    self.common_values.add(value)
+                continue
+
+            def is_valid_condition(cand: T.Set[SelectInstance]) -> bool:
+                matching = [l for l in target_seen_labels if cand.issubset(l)]
+                return bool(matching) and all(l in labels_set for l in matching)
+
+            raw_processed_labels: T.List[T.Set[SelectInstance]] = []
             for label in labels_list:
                 current_label = label.copy()
-                # Remove any full group matches from the label
+                # Try to remove each group if the remaining condition is valid across all evaluated configs
                 for group in select_instance_groups:
-                    if group.issubset(self.all_select_instances[value]):
-                        current_label -= group
+                    candidate = current_label - group
+                    if is_valid_condition(candidate):
+                        current_label = candidate
 
-                # Remove common custom instances
-                if self.common_custom_instances is not None:
-                    for instance in self.common_custom_instances:
-                        if instance in all_custom_defaults:
-                            current_label -= {instance}
+                # Remove unvarying custom defaults (custom variables never toggled in this target)
+                current_label -= unvarying_custom_defaults
 
-                if current_label:
-                    processed_labels.append(current_label)
+                if is_valid_condition(current_label):
+                    raw_processed_labels.append(current_label)
+                else:
+                    raw_processed_labels.append(label - unvarying_custom_defaults)
 
-            if not processed_labels:
+            # Filter out duplicate and non-minimal labels
+            processed_labels: T.List[T.Set[SelectInstance]] = []
+            for l in raw_processed_labels:
+                if not any(other < l for other in raw_processed_labels):
+                    if l not in processed_labels:
+                        processed_labels.append(l)
+
+            if not processed_labels or any(len(l) == 0 for l in processed_labels):
                 if isinstance(self.common_values, list):
                     if value not in self.common_values:
                         self.common_values.append(value)
@@ -213,14 +229,34 @@ class ConvertAttrNode:
             return []
 
         for select_node in self.select_nodes:
-            default_strings: T.List[str] = []
-            for select_id in select_node.select_ids:
-                default_strings.append('default')
+            default_strings: T.List[str] = ['default'] * len(select_node.select_ids)
 
-            select_node.select_tuples.append((default_strings, []))
+            tuples_to_add: T.List[T.Tuple[T.List[str], T.List[str]]] = []
+            for existing_values, _ in select_node.select_tuples:
+                for idx, (val, select_id) in enumerate(zip(existing_values, select_node.select_ids)):
+                    if val == 'default' and select_id.select_kind is SelectKind.CUSTOM:
+                        for group in self.select_instance_groups:
+                            group_select_ids = {inst.select_id for inst in group}
+                            if select_id in group_select_ids:
+                                for inst in group:
+                                    if inst.select_id == select_id and inst.value != 'default':
+                                        non_default_tuple = list(existing_values)
+                                        non_default_tuple[idx] = inst.value
+                                        tuples_to_add.append((non_default_tuple, []))
+
+            for new_tuple, empty_vals in tuples_to_add:
+                if not any(v == new_tuple for v, _ in select_node.select_tuples):
+                    select_node.select_tuples.append((new_tuple, empty_vals))
+
+            if not any(v == default_strings for v, _ in select_node.select_tuples):
+                select_node.select_tuples.append((default_strings, []))
 
             for values, attribute_values in select_node.select_tuples:
                 attribute_values.sort()
+
+            select_node.select_tuples.sort(
+                key=lambda item: (tuple(v == 'default' for v in item[0]), item[0])
+            )
 
         return self.select_nodes
 
@@ -292,8 +328,24 @@ class ConvertTarget:
 
     def finish(self, all_select_instance_groups: T.List[T.Set[SelectInstance]],
                all_custom_defaults: T.Set[SelectInstance]) -> None:  # fmt: skip
+        target_seen_custom_instances: T.Set[SelectInstance] = set()
+        target_seen_labels: T.Set[T.FrozenSet[SelectInstance]] = set()
         for node in self.attribute_nodes.values():
-            node.consolidate_conditionals(all_select_instance_groups, all_custom_defaults)
+            for labels_list in node.grouped_select_instances.values():
+                for label in labels_list:
+                    target_seen_labels.add(frozenset(label))
+                    for s in label:
+                        if s.select_id.select_kind is SelectKind.CUSTOM:
+                            target_seen_custom_instances.add(s)
+
+        varying_custom_select_ids = {
+            s.select_id for s in target_seen_custom_instances if s.value != 'default'
+        }
+        unvarying_custom_defaults = {
+            s for s in all_custom_defaults if s.select_id not in varying_custom_select_ids
+        }
+        for node in self.attribute_nodes.values():
+            node.consolidate_conditionals(all_select_instance_groups, unvarying_custom_defaults, target_seen_labels)
 
     def __lt__(self, other: ConvertTarget) -> bool:
         if not isinstance(other, ConvertTarget):
